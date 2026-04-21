@@ -1,0 +1,47 @@
+# Mirra - Git Ignore
+# IMPORTANT: Never commit personal data or secrets!
+
+# Personal data
+data/
+models/
+logs/
+*.db
+*.sqlite
+
+# Environment and secrets
+.env
+.env.*
+*.key
+*.pem
+data/encrypted/
+
+# Claude Code local settings
+.claude/
+
+# Voice and face samples
+data/voice_samples/
+data/face_samples/
+data/recordings/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+
+# Node
+node_modules/
+frontend/dist/
+.next/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

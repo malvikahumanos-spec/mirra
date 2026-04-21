@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="My Twin - Your Personal Digital Twin. 100% Local. 100% Private." />
+    <title>My Twin - Your Digital Twin</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+      /* Initial loading screen */
+      #loading-screen {
+        position: fixed; inset: 0; z-index: 9999;
+        display: flex; align-items: center; justify-content: center;
+        background: #101113;
+        transition: opacity 0.5s;
+      }
+      #loading-screen.fade-out { opacity: 0; pointer-events: none; }
+      .loader { width: 60px; height: 60px; border-radius: 50%;
+        border: 3px solid #25262B; border-top-color: #5c7cfa;
+        animation: spin 1s linear infinite; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+  </head>
+  <body class="bg-dark-900 text-dark-50">
+    <div id="loading-screen">
+      <div style="text-align: center;">
+        <div class="loader" style="margin: 0 auto 16px;"></div>
+        <div style="color: #5c7cfa; font-family: Inter; font-size: 14px;">Loading My Twin...</div>
+      </div>
+    </div>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
