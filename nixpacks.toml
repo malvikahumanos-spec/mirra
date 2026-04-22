@@ -3,9 +3,8 @@ nixPkgs = ["python312", "ffmpeg", "libsndfile"]
 
 [phases.install]
 cmds = [
-  "pip install --upgrade pip setuptools<71",
-  "pip install openai-whisper==20240930 --no-build-isolation -q",
-  "pip install -r backend/requirements.txt -q"
+  "pip install --upgrade pip setuptools==70.3.0",
+  "pip install -r backend/requirements-cloud.txt -q"
 ]
 
 [start]
