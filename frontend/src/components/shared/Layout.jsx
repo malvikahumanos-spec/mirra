@@ -5,12 +5,13 @@ import {
   HiOutlineChat, HiOutlineHome, HiOutlineClipboardList,
   HiOutlinePencilAlt, HiOutlineCalendar, HiOutlineLightBulb,
   HiOutlineCog, HiOutlineLogout, HiOutlineMenuAlt2,
-  HiOutlineShieldCheck, HiOutlineDatabase
+  HiOutlineShieldCheck, HiOutlineDatabase, HiOutlineFilm
 } from 'react-icons/hi'
 
 const navItems = [
   { path: '/', icon: HiOutlineHome, label: 'Dashboard' },
   { path: '/chat', icon: HiOutlineChat, label: 'Talk to Mirra' },
+  { path: '/emotion-studio', icon: HiOutlineFilm, label: 'Emotion Studio', badge: '🎭' },
   { path: '/tasks', icon: HiOutlineClipboardList, label: 'Tasks' },
   { path: '/notes', icon: HiOutlinePencilAlt, label: 'Notes' },
   { path: '/calendar', icon: HiOutlineCalendar, label: 'Calendar' },
@@ -72,7 +73,10 @@ export default function Layout({ children }) {
             >
               <item.icon className="w-5 h-5 flex-shrink-0" />
               {sidebarOpen && (
-                <span className="text-sm font-medium">{item.label}</span>
+                <span className="text-sm font-medium flex-1">{item.label}</span>
+              )}
+              {sidebarOpen && item.badge && (
+                <span className="text-sm">{item.badge}</span>
               )}
             </NavLink>
           ))}

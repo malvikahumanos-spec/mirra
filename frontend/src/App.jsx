@@ -12,6 +12,7 @@ import NotesPage from './pages/NotesPage'
 import CalendarPage from './pages/CalendarPage'
 import MemoryPage from './pages/MemoryPage'
 import TrainingPage from './pages/TrainingPage'
+import EmotionStudioPage from './pages/EmotionStudioPage'
 import SettingsPage from './pages/SettingsPage'
 
 function ProtectedRoute({ children }) {
@@ -48,6 +49,7 @@ export default function App() {
                   <Route path="/calendar" element={<CalendarPage />} />
                   <Route path="/memory" element={<MemoryPage />} />
                   <Route path="/training" element={<TrainingPage />} />
+                  <Route path="/emotion-studio" element={<EmotionStudioPage />} />
                   <Route path="/settings" element={<SettingsPage />} />
                 </Routes>
               </Layout>

@@ -20,7 +20,7 @@ from loguru import logger
 from backend.config import settings
 from backend.api.routes import (
     auth_router, twin_router, intent_router,
-    capture_router, system_router
+    capture_router, system_router, training_router
 )
 from backend.database.models import create_database
 from backend.database.vector_store import vector_store
@@ -128,6 +128,7 @@ app.include_router(twin_router)
 app.include_router(intent_router)
 app.include_router(capture_router)
 app.include_router(system_router)
+app.include_router(training_router)
 
 # Serve frontend static files
 from pathlib import Path

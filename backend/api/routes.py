@@ -569,6 +569,181 @@ async def capture_stats(user: str = Depends(get_current_user)):
     return interaction_tracker.get_interaction_stats()
 
 
+# ==================== EMOTION TRAINING ====================
+
+training_router = APIRouter(prefix="/api/training", tags=["training"])
+
+EMOTIONS = {
+    "neutral":       {"label": "Neutral / Talking",   "target_seconds": 300, "color": "#6B7280"},
+    "happy":         {"label": "Happy / Laughing",     "target_seconds": 120, "color": "#F59E0B"},
+    "sad":           {"label": "Sad / Emotional",      "target_seconds":  90, "color": "#3B82F6"},
+    "angry":         {"label": "Angry / Frustrated",   "target_seconds":  90, "color": "#EF4444"},
+    "surprised":     {"label": "Surprised",            "target_seconds":  60, "color": "#8B5CF6"},
+    "thinking":      {"label": "Thinking / Focused",   "target_seconds":  60, "color": "#10B981"},
+    "hindi_speaking":{"label": "Hindi / Hinglish",     "target_seconds": 120, "color": "#EC4899"},
+}
+
+EMOTION_TIPS = {
+    "neutral":        "Talk naturally — introduce yourself, say what you did today, describe your work.",
+    "happy":          "Laugh, smile big, recall a funny memory, talk about something you love.",
+    "sad":            "Think of something emotional — a tough day, something you miss, speak softly.",
+    "angry":          "Rant about a frustration — traffic, annoying work situation — be genuine.",
+    "surprised":      "React to imaginary good/bad news: 'What?! Really?', 'Oh my God!'",
+    "thinking":       "Solve a problem out loud, look away, tap chin, say 'hmm', pause and think.",
+    "hindi_speaking": "Speak in Hindi or Hinglish — any topic — baar baar bolte raho naturally.",
+}
+
+def _get_emotion_dir(emotion: str) -> Path:
+    base = settings.get_abs_path("data/face_samples/emotions")
+    d = base / emotion
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+def _get_meta_file() -> Path:
+    base = settings.get_abs_path("data/face_samples/emotions")
+    base.mkdir(parents=True, exist_ok=True)
+    return base / "meta.json"
+
+def _load_meta() -> dict:
+    f = _get_meta_file()
+    if f.exists():
+        return json.loads(f.read_text())
+    return {}
+
+def _save_meta(meta: dict):
+    _get_meta_file().write_text(json.dumps(meta, indent=2))
+
+
+@training_router.get("/status")
+async def emotion_status(user: str = Depends(get_current_user)):
+    """Return recorded duration per emotion and overall readiness score."""
+    meta = _load_meta()
+    result = {}
+    total_weight = 0
+    total_achieved = 0
+
+    for emotion, info in EMOTIONS.items():
+        user_meta = meta.get(user, {}).get(emotion, {})
+        recorded_seconds = user_meta.get("total_seconds", 0)
+        target = info["target_seconds"]
+        pct = min(100, int(recorded_seconds / target * 100))
+        clips = user_meta.get("clips", 0)
+
+        result[emotion] = {
+            "label": info["label"],
+            "color": info["color"],
+            "target_seconds": target,
+            "recorded_seconds": recorded_seconds,
+            "clips": clips,
+            "percent": pct,
+            "ready": pct >= 80,
+            "tip": EMOTION_TIPS[emotion],
+        }
+        total_weight += target
+        total_achieved += min(recorded_seconds, target)
+
+    readiness = int(total_achieved / total_weight * 100)
+    return {
+        "emotions": result,
+        "readiness": readiness,
+        "can_train": readiness >= 60,
+        "user": user,
+    }
+
+
+@training_router.post("/emotion-video")
+async def upload_emotion_video(
+    emotion: str = Query(...),
+    duration: float = Query(...),
+    file: UploadFile = File(...),
+    user: str = Depends(get_current_user),
+):
+    """Save a recorded emotion video clip."""
+    if emotion not in EMOTIONS:
+        raise HTTPException(status_code=400, detail=f"Unknown emotion: {emotion}")
+    if duration < 5:
+        raise HTTPException(status_code=400, detail="Clip too short (min 5 seconds)")
+
+    emotion_dir = _get_emotion_dir(emotion)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    filename = f"{user}_{emotion}_{ts}_{int(duration)}s.webm"
+    filepath = emotion_dir / filename
+
+    content = await file.read()
+    filepath.write_bytes(content)
+
+    # Update metadata
+    meta = _load_meta()
+    if user not in meta:
+        meta[user] = {}
+    if emotion not in meta[user]:
+        meta[user][emotion] = {"total_seconds": 0.0, "clips": 0, "files": []}
+    meta[user][emotion]["total_seconds"] += duration
+    meta[user][emotion]["clips"] += 1
+    meta[user][emotion]["files"].append(filename)
+    _save_meta(meta)
+
+    logger.info(f"Emotion video saved: {filename} ({duration:.1f}s) for {user}")
+    return {
+        "saved": filename,
+        "emotion": emotion,
+        "duration": duration,
+        "total_seconds": meta[user][emotion]["total_seconds"],
+        "clips": meta[user][emotion]["clips"],
+    }
+
+
+@training_router.delete("/emotion-video")
+async def clear_emotion(
+    emotion: str = Query(...),
+    user: str = Depends(get_current_user),
+):
+    """Clear all clips for an emotion."""
+    if emotion not in EMOTIONS:
+        raise HTTPException(status_code=400, detail="Unknown emotion")
+
+    emotion_dir = _get_emotion_dir(emotion)
+    meta = _load_meta()
+
+    # Delete files
+    files = meta.get(user, {}).get(emotion, {}).get("files", [])
+    for fname in files:
+        fp = emotion_dir / fname
+        if fp.exists():
+            fp.unlink()
+
+    # Reset meta
+    if user in meta and emotion in meta[user]:
+        meta[user][emotion] = {"total_seconds": 0.0, "clips": 0, "files": []}
+        _save_meta(meta)
+
+    return {"cleared": emotion, "files_deleted": len(files)}
+
+
+@training_router.get("/download-data")
+async def download_training_data(user: str = Depends(get_current_user)):
+    """Create a zip of all emotion videos for Colab training."""
+    import zipfile, io
+    from fastapi.responses import StreamingResponse
+
+    base = settings.get_abs_path("data/face_samples/emotions")
+    buf = io.BytesIO()
+
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for emotion in EMOTIONS:
+            emotion_dir = base / emotion
+            if emotion_dir.exists():
+                for f in emotion_dir.glob(f"{user}_*.webm"):
+                    zf.write(f, f"{emotion}/{f.name}")
+
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename=mirra_training_{user}.zip"},
+    )
+
+
 # ==================== SYSTEM ====================
 
 @system_router.get("/health")
