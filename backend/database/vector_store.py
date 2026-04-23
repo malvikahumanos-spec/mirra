@@ -23,21 +23,30 @@ class VectorStore:
         self._collections: dict = {}
 
     def initialize(self):
-        """Initialize ChromaDB with local persistent storage."""
+        """Initialize ChromaDB — persistent locally, ephemeral on cloud."""
         try:
             import chromadb
             from chromadb.config import Settings as ChromaSettings
+            import os
 
-            db_path = str(settings.get_abs_path(settings.database.VECTOR_DB_PATH))
-            Path(db_path).mkdir(parents=True, exist_ok=True)
+            is_cloud = bool(os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("VERCEL"))
 
-            self._client = chromadb.PersistentClient(
-                path=db_path,
-                settings=ChromaSettings(
-                    anonymized_telemetry=False,  # No telemetry - privacy first
-                    allow_reset=False,
-                ),
-            )
+            if is_cloud:
+                # Railway filesystem is ephemeral — use in-memory client
+                self._client = chromadb.EphemeralClient(
+                    settings=ChromaSettings(anonymized_telemetry=False)
+                )
+                logger.info("Vector store: in-memory mode (cloud)")
+            else:
+                db_path = str(settings.get_abs_path(settings.database.VECTOR_DB_PATH))
+                Path(db_path).mkdir(parents=True, exist_ok=True)
+                self._client = chromadb.PersistentClient(
+                    path=db_path,
+                    settings=ChromaSettings(
+                        anonymized_telemetry=False,
+                        allow_reset=False,
+                    ),
+                )
 
             # Create collections for different memory types
             self._collections["memories"] = self._client.get_or_create_collection(

@@ -10,6 +10,7 @@ Your personal Mirra. Completely local. Privacy first.
 """
 
 import asyncio
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -47,50 +48,66 @@ def setup_logging():
     )
 
 
+# Detect cloud environment (Railway sets this automatically)
+IS_CLOUD = bool(os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("VERCEL"))
+
+
+async def _background_init():
+    """Heavy model downloads run after app is ready to serve requests."""
+    # Small delay so health check passes first
+    await asyncio.sleep(2)
+    logger.info("Background init: loading heavy models...")
+
+    # Emotion model (~270MB HuggingFace download — skip in cloud)
+    if not IS_CLOUD:
+        emotion_engine.initialize(load_face=False, load_voice=False)
+
+    # Whisper STT (local only)
+    if not IS_CLOUD:
+        stt_engine.initialize()
+
+    # Data capture engines (local only)
+    if not IS_CLOUD:
+        audio_capture.initialize()
+        video_capture.initialize()
+
+    logger.info("Background init complete")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application startup and shutdown."""
+    """Application startup — fast path for cloud, full init for local."""
     logger.info("=" * 50)
     logger.info("  MIRRA - Starting Up")
-    logger.info("  100% Local. 100% Private.")
+    logger.info(f"  Mode: {'Cloud ☁️' if IS_CLOUD else 'Local 🏠'}")
     logger.info("=" * 50)
 
-    # Setup
     setup_logging()
     settings.ensure_directories()
 
-    # Initialize database
+    # Fast startup: DB + vector store + LLM (always needed)
     create_database()
     logger.info("Database initialized")
 
-    # Initialize vector store
     vector_store.initialize()
     logger.info("Vector store initialized")
 
-    # Initialize AI engines
     await llm_engine.initialize()
 
-    # Initialize emotion engine (text only by default - fast)
-    emotion_engine.initialize(load_face=False, load_voice=False)
-
-    # Initialize STT (Whisper)
-    stt_engine.initialize()
-
-    # Initialize services
+    # Always-needed services
     twin_engine.initialize()
     intent_engine.initialize()
-    audio_capture.initialize()
-    video_capture.initialize()
     interaction_tracker.initialize()
 
-    # Verify security
     logger.info(f"Server binding: {settings.server.HOST}:{settings.server.PORT}")
     logger.info(f"Firewall status: {firewall.get_security_report()['status']}")
 
     logger.info("=" * 50)
     logger.info("  MIRRA - Ready!")
-    logger.info(f"  Open: http://127.0.0.1:{settings.server.PORT}")
     logger.info("=" * 50)
+
+    # Heavy models load in background (doesn't block healthcheck)
+    asyncio.create_task(_background_init())
 
     yield
 

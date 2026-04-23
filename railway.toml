@@ -8,6 +8,6 @@ installCommand = "pip install -r backend/requirements.txt"
 [deploy]
 startCommand = "uvicorn backend.main:app --host 0.0.0.0 --port $PORT --workers 1"
 healthcheckPath = "/health"
-healthcheckTimeout = 60
+healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 3
