@@ -360,25 +360,19 @@ def _build_engine():
     """
     Build SQLAlchemy engine.
     Uses Supabase PostgreSQL if DATABASE_URL is set, otherwise SQLite.
-    Automatically falls back to SQLite if PostgreSQL is unreachable.
+    connect_timeout=5 ensures we fail fast (not hang 30-120s) if unreachable.
     """
     from loguru import logger
     db_url = settings.database.DATABASE_URL
 
     if db_url:
-        try:
-            # PostgreSQL / Supabase — NullPool works best with serverless/pooler
-            logger.info("Database: connecting to PostgreSQL (Supabase)...")
-            engine = create_engine(db_url, poolclass=NullPool, echo=settings.DEBUG)
-            # Eagerly test the connection so we know it works before create_all()
-            with engine.connect() as conn:
-                conn.execute(__import__("sqlalchemy").text("SELECT 1"))
-            logger.info("Database: Supabase PostgreSQL connected ✓")
-            return engine
-        except Exception as pg_err:
-            logger.error(f"PostgreSQL unavailable: {pg_err}")
-            logger.warning("Falling back to SQLite for this session")
-            return _build_sqlite_engine("PostgreSQL fallback")
+        logger.info("Database: PostgreSQL (Supabase)")
+        return create_engine(
+            db_url,
+            poolclass=NullPool,
+            echo=settings.DEBUG,
+            connect_args={"connect_timeout": 5},  # fail fast, don't hang
+        )
     else:
         return _build_sqlite_engine()
 

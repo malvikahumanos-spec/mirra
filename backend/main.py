@@ -76,34 +76,60 @@ async def _background_init():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application startup — fast path for cloud, full init for local."""
+    """Application startup — bulletproof: every service wrapped in try/except."""
     logger.info("=" * 50)
     logger.info("  MIRRA - Starting Up")
-    logger.info(f"  Mode: {'Cloud ☁️' if IS_CLOUD else 'Local 🏠'}")
+    logger.info(f"  Mode: {'Cloud' if IS_CLOUD else 'Local'}")
     logger.info("=" * 50)
 
-    setup_logging()
-    settings.ensure_directories()
+    try:
+        setup_logging()
+    except Exception as e:
+        logger.warning(f"Logging setup failed (non-fatal): {e}")
 
-    # Fast startup: DB + vector store + LLM (always needed)
-    create_database()
-    logger.info("Database initialized")
+    try:
+        settings.ensure_directories()
+    except Exception as e:
+        logger.warning(f"Directory setup failed (non-fatal): {e}")
 
-    vector_store.initialize()
-    logger.info("Vector store initialized")
+    # Database — self-healing (PostgreSQL → SQLite fallback inside create_database)
+    try:
+        create_database()
+        logger.info("Database initialized")
+    except Exception as e:
+        logger.error(f"Database init failed: {e}")
 
-    await llm_engine.initialize()
+    # Vector store — safe (has internal try/except)
+    try:
+        vector_store.initialize()
+        logger.info("Vector store initialized")
+    except Exception as e:
+        logger.error(f"Vector store init failed (non-fatal): {e}")
 
-    # Always-needed services
-    twin_engine.initialize()
-    intent_engine.initialize()
-    interaction_tracker.initialize()
+    # LLM engine — safe (has internal try/except)
+    try:
+        await llm_engine.initialize()
+    except Exception as e:
+        logger.error(f"LLM engine init failed (non-fatal): {e}")
 
-    logger.info(f"Server binding: {settings.server.HOST}:{settings.server.PORT}")
-    logger.info(f"Firewall status: {firewall.get_security_report()['status']}")
+    # Business logic engines — wrap each individually
+    try:
+        twin_engine.initialize()
+    except Exception as e:
+        logger.error(f"Twin engine init failed (non-fatal): {e}")
+
+    try:
+        intent_engine.initialize()
+    except Exception as e:
+        logger.error(f"Intent engine init failed (non-fatal): {e}")
+
+    try:
+        interaction_tracker.initialize()
+    except Exception as e:
+        logger.error(f"Interaction tracker init failed (non-fatal): {e}")
 
     logger.info("=" * 50)
-    logger.info("  MIRRA - Ready!")
+    logger.info("  MIRRA - Ready! (some services may be degraded — check logs)")
     logger.info("=" * 50)
 
     # Heavy models load in background (doesn't block healthcheck)
@@ -113,7 +139,10 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("MIRRA shutting down...")
-    await llm_engine.close()
+    try:
+        await llm_engine.close()
+    except Exception:
+        pass
 
 
 # Create FastAPI app
