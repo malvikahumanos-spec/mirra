@@ -70,7 +70,10 @@ class VectorStore:
                 metadata={"description": "User notes and knowledge"},
             )
 
-            logger.info(f"Vector store initialized at {db_path}")
+            if is_cloud:
+                logger.info("Vector store initialized (in-memory cloud mode)")
+            else:
+                logger.info(f"Vector store initialized at {db_path}")
             return True
         except Exception as e:
             logger.error(f"Failed to initialize vector store: {e}")

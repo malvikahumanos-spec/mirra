@@ -339,35 +339,48 @@ class AuditLog(Base):
 
 # --- Database Engine Setup ---
 
+def _build_sqlite_engine(reason: str = ""):
+    """Build a SQLite fallback engine."""
+    from loguru import logger
+    db_path = settings.get_abs_path(settings.database.SQLITE_DB_PATH)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    if reason:
+        logger.info(f"Database: SQLite at {db_path} ({reason})")
+    else:
+        logger.info(f"Database: SQLite at {db_path}")
+    return create_engine(
+        f"sqlite:///{db_path}",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+        echo=settings.DEBUG,
+    )
+
+
 def _build_engine():
     """
     Build SQLAlchemy engine.
     Uses Supabase PostgreSQL if DATABASE_URL is set, otherwise SQLite.
+    Automatically falls back to SQLite if PostgreSQL is unreachable.
     """
+    from loguru import logger
     db_url = settings.database.DATABASE_URL
 
     if db_url:
-        # PostgreSQL / Supabase
-        # psycopg2 connection pooling — NullPool works well with serverless
-        from loguru import logger
-        logger.info("Database: Supabase PostgreSQL")
-        return create_engine(
-            db_url,
-            poolclass=NullPool,
-            echo=settings.DEBUG,
-        )
+        try:
+            # PostgreSQL / Supabase — NullPool works best with serverless/pooler
+            logger.info("Database: connecting to PostgreSQL (Supabase)...")
+            engine = create_engine(db_url, poolclass=NullPool, echo=settings.DEBUG)
+            # Eagerly test the connection so we know it works before create_all()
+            with engine.connect() as conn:
+                conn.execute(__import__("sqlalchemy").text("SELECT 1"))
+            logger.info("Database: Supabase PostgreSQL connected ✓")
+            return engine
+        except Exception as pg_err:
+            logger.error(f"PostgreSQL unavailable: {pg_err}")
+            logger.warning("Falling back to SQLite for this session")
+            return _build_sqlite_engine("PostgreSQL fallback")
     else:
-        # SQLite (local fallback)
-        from loguru import logger
-        db_path = settings.get_abs_path(settings.database.SQLITE_DB_PATH)
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Database: SQLite at {db_path}")
-        return create_engine(
-            f"sqlite:///{db_path}",
-            connect_args={"check_same_thread": False},
-            poolclass=StaticPool,
-            echo=settings.DEBUG,
-        )
+        return _build_sqlite_engine()
 
 
 # Module-level engine and session factory (created once at startup)
@@ -379,7 +392,13 @@ def create_database():
     """Create the database engine and all tables."""
     global _engine, _SessionFactory
     _engine = _build_engine()
-    Base.metadata.create_all(_engine)
+    try:
+        Base.metadata.create_all(_engine)
+    except Exception as e:
+        from loguru import logger
+        logger.error(f"create_all failed on primary engine: {e} — retrying with SQLite")
+        _engine = _build_sqlite_engine("create_all fallback")
+        Base.metadata.create_all(_engine)
     _SessionFactory = sessionmaker(bind=_engine)
     return _engine
 

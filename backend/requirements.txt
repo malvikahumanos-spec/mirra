@@ -14,8 +14,9 @@ alembic==1.14.0
 psycopg2-binary>=2.9.9
 
 # Vector Database
+# sentence-transformers NOT included — would pull in PyTorch (~700 MB)
+# ChromaDB 0.6+ uses its own ONNX-based embeddings (no torch needed)
 chromadb>=0.6.0
-sentence-transformers>=3.3.1
 
 # Groq AI
 groq>=0.8.0
