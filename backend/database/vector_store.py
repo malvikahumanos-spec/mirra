@@ -23,32 +23,32 @@ class VectorStore:
         self._collections: dict = {}
 
     def initialize(self):
-        """Initialize ChromaDB — persistent locally, ephemeral on cloud."""
+        """Initialize ChromaDB — local only. Skipped in cloud (ephemeral FS + ONNX download hangs)."""
+        import os
+        is_cloud = bool(os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("VERCEL"))
+
+        if is_cloud:
+            # Skip ChromaDB entirely on Railway/Vercel:
+            #  1. Filesystem is ephemeral — data is lost on every restart anyway
+            #  2. ChromaDB's ONNX model download (~80MB) is synchronous and blocks startup
+            # All vector_store methods gracefully return [] / no-op when _collections is empty.
+            logger.info("Vector store: skipped in cloud mode (ephemeral environment)")
+            return True
+
         try:
             import chromadb
             from chromadb.config import Settings as ChromaSettings
-            import os
 
-            is_cloud = bool(os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("VERCEL"))
+            db_path = str(settings.get_abs_path(settings.database.VECTOR_DB_PATH))
+            Path(db_path).mkdir(parents=True, exist_ok=True)
+            self._client = chromadb.PersistentClient(
+                path=db_path,
+                settings=ChromaSettings(
+                    anonymized_telemetry=False,
+                    allow_reset=False,
+                ),
+            )
 
-            if is_cloud:
-                # Railway filesystem is ephemeral — use in-memory client
-                self._client = chromadb.EphemeralClient(
-                    settings=ChromaSettings(anonymized_telemetry=False)
-                )
-                logger.info("Vector store: in-memory mode (cloud)")
-            else:
-                db_path = str(settings.get_abs_path(settings.database.VECTOR_DB_PATH))
-                Path(db_path).mkdir(parents=True, exist_ok=True)
-                self._client = chromadb.PersistentClient(
-                    path=db_path,
-                    settings=ChromaSettings(
-                        anonymized_telemetry=False,
-                        allow_reset=False,
-                    ),
-                )
-
-            # Create collections for different memory types
             self._collections["memories"] = self._client.get_or_create_collection(
                 name="memories",
                 metadata={"description": "Long-term memories and experiences"},
@@ -70,10 +70,7 @@ class VectorStore:
                 metadata={"description": "User notes and knowledge"},
             )
 
-            if is_cloud:
-                logger.info("Vector store initialized (in-memory cloud mode)")
-            else:
-                logger.info(f"Vector store initialized at {db_path}")
+            logger.info(f"Vector store initialized at {db_path}")
             return True
         except Exception as e:
             logger.error(f"Failed to initialize vector store: {e}")

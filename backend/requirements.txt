@@ -13,10 +13,8 @@ sqlalchemy==2.0.36
 alembic==1.14.0
 psycopg2-binary>=2.9.9
 
-# Vector Database
-# sentence-transformers NOT included — would pull in PyTorch (~700 MB)
-# ChromaDB 0.6+ uses its own ONNX-based embeddings (no torch needed)
-chromadb>=0.6.0
+# Vector Database — skipped in cloud (ChromaDB downloads ONNX model on startup, blocks healthcheck)
+# chromadb is local-only; install via requirements-local.txt
 
 # Groq AI
 groq>=0.8.0
