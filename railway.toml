@@ -3,10 +3,10 @@ builder = "NIXPACKS"
 
 [build.nixpacks]
 # Use cloud requirements (lighter, no torch/whisper/opencv)
-installCommand = "pip install -r backend/requirements.txt"
+installCommand = "python -m pip install -r backend/requirements.txt"
 
 [deploy]
-startCommand = "uvicorn backend.main:app --host 0.0.0.0 --port $PORT --workers 1"
+startCommand = "python -m uvicorn backend.main:app --host 0.0.0.0 --port $PORT --workers 1"
 healthcheckPath = "/health"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
