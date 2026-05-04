@@ -1,12 +1,6 @@
 """
 Mirra - Main Application
 Your personal Mirra. Completely local. Privacy first.
-
-        ╔══════════════════════════════════╗
-        ║           MIRRA v1.0             ║
-        ║        Your Mirra System         ║
-        ║    100% Local. 100% Private.     ║
-        ╚══════════════════════════════════╝
 """
 
 import asyncio
@@ -36,108 +30,107 @@ from backend.services.data_capture.capture_engine import (
 from backend.security.firewall import firewall
 
 
-def setup_logging():
-    """Configure logging."""
-    log_file = settings.get_abs_path(settings.server.LOG_FILE)
-    log_file.parent.mkdir(parents=True, exist_ok=True)
-    logger.add(
-        str(log_file),
-        rotation="10 MB",
-        retention="30 days",
-        level=settings.server.LOG_LEVEL,
-    )
-
-
-# Detect cloud environment (Railway sets this automatically)
+# Detect cloud environment (Railway sets RAILWAY_ENVIRONMENT automatically)
 IS_CLOUD = bool(os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("VERCEL"))
 
 
-async def _background_init():
-    """Heavy model downloads run after app is ready to serve requests."""
-    # Small delay so health check passes first
-    await asyncio.sleep(2)
-    logger.info("Background init: loading heavy models...")
-
-    # Emotion model (~270MB HuggingFace download — skip in cloud)
-    if not IS_CLOUD:
-        emotion_engine.initialize(load_face=False, load_voice=False)
-
-    # Whisper STT (local only)
-    if not IS_CLOUD:
-        stt_engine.initialize()
-
-    # Data capture engines (local only)
-    if not IS_CLOUD:
-        audio_capture.initialize()
-        video_capture.initialize()
-
-    logger.info("Background init complete")
+def setup_logging():
+    """Configure logging."""
+    try:
+        log_file = settings.get_abs_path(settings.server.LOG_FILE)
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        logger.add(
+            str(log_file),
+            rotation="10 MB",
+            retention="30 days",
+            level=settings.server.LOG_LEVEL,
+        )
+    except Exception as e:
+        logger.warning(f"File logging unavailable: {e}")
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Application startup — bulletproof: every service wrapped in try/except."""
+async def _full_startup():
+    """
+    All heavy init runs as a background task so the lifespan yields
+    immediately and Railway's healthcheck passes on the first attempt.
+    """
     logger.info("=" * 50)
-    logger.info("  MIRRA - Starting Up")
+    logger.info("  MIRRA - Background Init Starting")
     logger.info(f"  Mode: {'Cloud' if IS_CLOUD else 'Local'}")
     logger.info("=" * 50)
 
-    try:
-        setup_logging()
-    except Exception as e:
-        logger.warning(f"Logging setup failed (non-fatal): {e}")
+    setup_logging()
 
     try:
         settings.ensure_directories()
     except Exception as e:
         logger.warning(f"Directory setup failed (non-fatal): {e}")
 
-    # Database — self-healing (PostgreSQL → SQLite fallback inside create_database)
+    # Database (PostgreSQL → SQLite fallback handled inside create_database)
     try:
         create_database()
         logger.info("Database initialized")
     except Exception as e:
         logger.error(f"Database init failed: {e}")
 
-    # Vector store — safe (has internal try/except)
+    # Vector store (skipped in cloud — no ONNX download hanging startup)
     try:
         vector_store.initialize()
         logger.info("Vector store initialized")
     except Exception as e:
         logger.error(f"Vector store init failed (non-fatal): {e}")
 
-    # LLM engine — safe (has internal try/except)
+    # LLM engine — network call to Groq (or Ollama fallback); has its own timeouts
     try:
-        await llm_engine.initialize()
+        await asyncio.wait_for(llm_engine.initialize(), timeout=30.0)
+        logger.info("LLM engine initialized")
+    except asyncio.TimeoutError:
+        logger.error("LLM engine init timed out after 30s — continuing without LLM")
     except Exception as e:
         logger.error(f"LLM engine init failed (non-fatal): {e}")
 
-    # Business logic engines — wrap each individually
-    try:
-        twin_engine.initialize()
-    except Exception as e:
-        logger.error(f"Twin engine init failed (non-fatal): {e}")
+    # Business logic engines
+    for name, fn in [
+        ("twin_engine",          lambda: twin_engine.initialize()),
+        ("intent_engine",        lambda: intent_engine.initialize()),
+        ("interaction_tracker",  lambda: interaction_tracker.initialize()),
+    ]:
+        try:
+            fn()
+            logger.info(f"{name} initialized")
+        except Exception as e:
+            logger.error(f"{name} init failed (non-fatal): {e}")
 
-    try:
-        intent_engine.initialize()
-    except Exception as e:
-        logger.error(f"Intent engine init failed (non-fatal): {e}")
-
-    try:
-        interaction_tracker.initialize()
-    except Exception as e:
-        logger.error(f"Interaction tracker init failed (non-fatal): {e}")
+    # Heavy local-only models (skipped in cloud)
+    if not IS_CLOUD:
+        try:
+            emotion_engine.initialize(load_face=False, load_voice=False)
+        except Exception as e:
+            logger.warning(f"Emotion engine init failed: {e}")
+        try:
+            stt_engine.initialize()
+        except Exception as e:
+            logger.warning(f"STT engine init failed: {e}")
+        try:
+            audio_capture.initialize()
+            video_capture.initialize()
+        except Exception as e:
+            logger.warning(f"Capture engines init failed: {e}")
 
     logger.info("=" * 50)
-    logger.info("  MIRRA - Ready! (some services may be degraded — check logs)")
+    logger.info("  MIRRA - Background Init Complete")
     logger.info("=" * 50)
 
-    # Heavy models load in background (doesn't block healthcheck)
-    asyncio.create_task(_background_init())
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Yield immediately so uvicorn starts serving (and Railway healthcheck passes).
+    All real initialization happens in _full_startup() background task.
+    """
+    logger.info("MIRRA starting — spawning background init...")
+    asyncio.create_task(_full_startup())
     yield
-
-    # Shutdown
     logger.info("MIRRA shutting down...")
     try:
         await llm_engine.close()
@@ -145,7 +138,8 @@ async def lifespan(app: FastAPI):
         pass
 
 
-# Create FastAPI app
+# ── App ────────────────────────────────────────────────────────────────────────
+
 app = FastAPI(
     title="Mirra",
     description="Your Personal Mirra - 100% Local, 100% Private",
@@ -168,7 +162,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Register routers
+# Routers
 app.include_router(auth_router)
 app.include_router(twin_router)
 app.include_router(intent_router)
@@ -176,7 +170,7 @@ app.include_router(capture_router)
 app.include_router(system_router)
 app.include_router(training_router)
 
-# Serve frontend static files
+# Frontend static files (only present when built locally)
 from pathlib import Path
 frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
 if frontend_dist.exists():
@@ -185,7 +179,7 @@ if frontend_dist.exists():
 
 @app.get("/health")
 async def health():
-    """Health check endpoint — used by Railway and uptime monitors."""
+    """Health check — always responds immediately."""
     return {"status": "ok", "app": "Mirra", "version": settings.APP_VERSION}
 
 
