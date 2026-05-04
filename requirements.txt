@@ -1,0 +1,48 @@
+# Root-level requirements.txt — signals to nixpacks that this is a Python project.
+# Actual installation uses backend/requirements.txt via railway.toml installCommand.
+# Keep this in sync with backend/requirements.txt.
+
+# Core Backend
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+pydantic==2.10.4
+pydantic-settings==2.7.1
+
+# Database
+sqlalchemy==2.0.36
+alembic==1.14.0
+psycopg2-binary>=2.9.9
+
+# Groq AI
+groq>=0.8.0
+
+# Security
+cryptography>=44.0.0
+bcrypt==4.2.1
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+
+# Data Processing
+numpy>=2.2.1
+pandas>=2.2.3
+
+# NLP
+nltk>=3.9.1
+textblob>=0.18.0
+
+# Scheduling
+apscheduler>=3.10.4
+
+# Logging
+loguru>=0.7.3
+rich>=13.9.4
+
+# WebSocket & HTTP
+websockets>=14.1
+httpx>=0.27.0
+aiofiles>=24.1.0
+
+# Calendar & Email
+icalendar>=6.1.0
+email-validator==2.2.0
