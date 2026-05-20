@@ -159,6 +159,13 @@ if settings.server.CORS_EXTRA_ORIGINS:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
+    # Allow any Vercel deployment URL (preview + production) and localhost variants.
+    # allow_origin_regex is checked when the origin isn't in allow_origins.
+    allow_origin_regex=(
+        r"https://.*\.vercel\.app"          # all *.vercel.app previews & production
+        r"|http://localhost:\d+"            # local dev any port
+        r"|http://127\.0\.0\.1:\d+"         # local dev 127.x any port
+    ),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
