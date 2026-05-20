@@ -60,8 +60,13 @@ class AuthManager:
         except Exception as e:
             logger.error(f"Failed to save users: {e}")
 
-    def create_user(self, username: str, password: str) -> bool:
-        """Create a new local user."""
+    def create_user(self, username: str, password: str, crypto_salt: str = "") -> bool:
+        """Create a new local user.
+
+        crypto_salt: hex string generated client-side by CryptoEngine.generateSalt().
+        Stored as-is — it is NOT secret (only the password can derive the key).
+        If not provided, a server-side fallback salt is generated.
+        """
         if username in self._users:
             logger.warning(f"User already exists: {username}")
             return False
@@ -70,10 +75,16 @@ class AuthManager:
             logger.warning("Password too short")
             return False
 
+        # If client didn't send a salt, generate one server-side
+        if not crypto_salt:
+            import secrets as _s
+            crypto_salt = _s.token_hex(32)
+
         hashed = pwd_context.hash(password)
         self._users[username] = {
             "username": username,
             "hashed_password": hashed,
+            "crypto_salt": crypto_salt,   # used by client to re-derive key
             "created_at": datetime.now(timezone.utc).isoformat(),
             "last_login": None,
             "failed_attempts": 0,
@@ -82,6 +93,18 @@ class AuthManager:
         self._save_users()
         logger.info(f"User created: {username}")
         return True
+
+    def get_crypto_salt(self, username: str) -> Optional[str]:
+        """Return the user's crypto salt (public — not a secret)."""
+        user = self._users.get(username)
+        if not user:
+            return None
+        # Back-fill salt for accounts created before encryption was added
+        if "crypto_salt" not in user:
+            import secrets as _s
+            user["crypto_salt"] = _s.token_hex(32)
+            self._save_users()
+        return user["crypto_salt"]
 
     def authenticate(self, username: str, password: str) -> Optional[Token]:
         """Authenticate user and return JWT token."""

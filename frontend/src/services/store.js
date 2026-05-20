@@ -1,11 +1,25 @@
 /**
  * Mirra - Global State Management (Zustand)
+ *
+ * Zero-knowledge integration:
+ *   - Chat history cache is stored encrypted in localStorage (AES-256-GCM)
+ *   - The encryption key lives in memory only; it is wiped on logout
+ *   - loadFromStorage() must be called after login once the key is ready
+ *   - All setLocalItem / getLocalItem calls fall back to plaintext gracefully
+ *     if the key is not yet initialised (i.e. during first-ever page load
+ *     before login).
  */
 
 import { create } from 'zustand'
+import { cryptoEngine } from './crypto'
+
+// ── Auth store ────────────────────────────────────────────────────────────────
+// The JWT token and username are NOT personally sensitive — they carry no
+// readable private data.  Keeping them in plaintext localStorage is fine; the
+// server validates the JWT on every request.
 
 export const useAuthStore = create((set) => ({
-  user: null,
+  user: localStorage.getItem('mirra_user'),
   token: localStorage.getItem('mirra_token'),
   isAuthenticated: !!localStorage.getItem('mirra_token'),
 
@@ -18,62 +32,89 @@ export const useAuthStore = create((set) => ({
   logout: () => {
     localStorage.removeItem('mirra_token')
     localStorage.removeItem('mirra_user')
+    // Wipe the AES key from memory — nobody can decrypt local data after this
+    cryptoEngine.clearKey()
     set({ token: null, user: null, isAuthenticated: false })
   },
 }))
 
-// Restore saved chat from localStorage
-const savedChat = JSON.parse(localStorage.getItem('mirra_chat') || 'null')
+// ── Chat store ────────────────────────────────────────────────────────────────
+// Chat messages are cached locally for instant restore on page refresh.
+// The entire cache blob is encrypted as one AES-256-GCM ciphertext so that
+// even if someone gains physical access to this device they cannot read
+// conversation history.
+//
+// Startup flow:
+//   1. Module loads  → state starts empty (key not ready yet).
+//   2. User logs in  → key derived in LoginPage → loadFromStorage() called.
+//   3. Store hydrates from encrypted localStorage.
 
 export const useChatStore = create((set, get) => ({
-  messages: savedChat?.messages || [],
-  conversationId: savedChat?.conversationId || null,
+  messages: [],
+  conversationId: null,
   isLoading: false,
-  currentContact: savedChat?.currentContact || null,
+  currentContact: null,
+
+  /**
+   * Hydrate store from encrypted localStorage.
+   * Call this once immediately after the crypto key is derived (post-login).
+   */
+  loadFromStorage: async () => {
+    try {
+      const saved = await cryptoEngine.getLocalItem('mirra_chat')
+      if (saved) {
+        set({
+          messages:       saved.messages       || [],
+          conversationId: saved.conversationId || null,
+          currentContact: saved.currentContact || null,
+        })
+      }
+    } catch {
+      /* corrupted / not present — silently ignore */
+    }
+  },
+
+  /** Persist current state to encrypted localStorage (fire-and-forget). */
+  _persist: (messages, conversationId, currentContact) => {
+    cryptoEngine.setLocalItem('mirra_chat', { messages, conversationId, currentContact })
+      .catch(() => {/* ignore cache write errors */})
+  },
 
   addMessage: (message) =>
     set((state) => {
       const updated = [...state.messages, message]
-      localStorage.setItem('mirra_chat', JSON.stringify({
-        messages: updated,
-        conversationId: state.conversationId,
-        currentContact: state.currentContact,
-      }))
+      get()._persist(updated, state.conversationId, state.currentContact)
       return { messages: updated }
     }),
 
   setConversationId: (id) => {
     set({ conversationId: id })
-    const state = get()
-    localStorage.setItem('mirra_chat', JSON.stringify({
-      messages: state.messages,
-      conversationId: id,
-      currentContact: state.currentContact,
-    }))
+    const { messages, currentContact } = get()
+    get()._persist(messages, id, currentContact)
   },
+
   setLoading: (loading) => set({ isLoading: loading }),
+
   setCurrentContact: (contact) => {
     set({ currentContact: contact })
-    const state = get()
-    localStorage.setItem('mirra_chat', JSON.stringify({
-      messages: state.messages,
-      conversationId: state.conversationId,
-      currentContact: contact,
-    }))
+    const { messages, conversationId } = get()
+    get()._persist(messages, conversationId, contact)
   },
+
   clearChat: () => {
-    localStorage.removeItem('mirra_chat')
+    cryptoEngine.removeLocalItem('mirra_chat')
     set({ messages: [], conversationId: null, currentContact: null })
   },
 }))
 
+// ── App store ─────────────────────────────────────────────────────────────────
 export const useAppStore = create((set) => ({
-  sidebarOpen: true,
-  currentPage: 'chat',
+  sidebarOpen:  true,
+  currentPage:  'chat',
   systemStatus: null,
-  darkMode: true,
+  darkMode:     true,
 
-  toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
-  setCurrentPage: (page) => set({ currentPage: page }),
+  toggleSidebar:   () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
+  setCurrentPage:  (page)   => set({ currentPage: page }),
   setSystemStatus: (status) => set({ systemStatus: status }),
 }))

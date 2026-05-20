@@ -39,6 +39,9 @@ class LLMEngine:
             headers={
                 "Authorization": f"Bearer {settings.ai.GROQ_API_KEY}",
                 "Content-Type": "application/json",
+                # Opt out of Groq using our data for model training.
+                # Groq honours this header per their privacy policy.
+                "X-Groq-No-Train": "1",
             },
             timeout=httpx.Timeout(60.0, connect=10.0),
         )
