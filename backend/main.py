@@ -15,7 +15,7 @@ from loguru import logger
 from backend.config import settings
 from backend.api.routes import (
     auth_router, twin_router, intent_router,
-    capture_router, system_router, training_router
+    capture_router, system_router, training_router, avatar_router
 )
 from backend.database.models import create_database
 from backend.database.vector_store import vector_store
@@ -27,6 +27,7 @@ from backend.services.intent_os.intent_engine import intent_engine
 from backend.services.data_capture.capture_engine import (
     audio_capture, video_capture, interaction_tracker
 )
+from backend.services.avatar.avatar_engine import avatar_engine
 from backend.security.firewall import firewall
 
 
@@ -94,6 +95,7 @@ async def _full_startup():
         ("twin_engine",          lambda: twin_engine.initialize()),
         ("intent_engine",        lambda: intent_engine.initialize()),
         ("interaction_tracker",  lambda: interaction_tracker.initialize()),
+        ("avatar_engine",        lambda: avatar_engine.initialize()),
     ]:
         try:
             fn()
@@ -169,6 +171,7 @@ app.include_router(intent_router)
 app.include_router(capture_router)
 app.include_router(system_router)
 app.include_router(training_router)
+app.include_router(avatar_router)
 
 # Frontend static files (only present when built locally)
 from pathlib import Path

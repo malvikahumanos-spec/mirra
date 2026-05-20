@@ -116,4 +116,18 @@ export const systemAPI = {
   status: () => api.get('/system/status'),
 }
 
+// Avatar
+export const avatarAPI = {
+  getConfig:    ()      => api.get('/avatar/config'),
+  updateConfig: (data)  => api.patch('/avatar/config', data),
+  getState:     ()      => api.get('/avatar/state'),
+  setEmotion:   (data)  => api.post('/avatar/emotion', data),
+  uploadPhoto:  (file)  => {
+    const form = new FormData()
+    form.append('file', file)
+    return api.post('/avatar/photo', form, { headers: { 'Content-Type': 'multipart/form-data' } })
+  },
+  deletePhoto:  ()      => api.delete('/avatar/photo'),
+}
+
 export default api

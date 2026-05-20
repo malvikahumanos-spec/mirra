@@ -776,3 +776,165 @@ async def system_status(user: str = Depends(get_current_user)):
         "security": firewall.get_security_report(),
         "twin_stats": twin_engine.get_stats(),
     }
+
+
+# ==================== AVATAR ====================
+
+from backend.services.avatar.avatar_engine import avatar_engine, VALID_EMOTIONS
+from fastapi.responses import FileResponse, StreamingResponse as _SR
+
+avatar_router = APIRouter(prefix="/api/avatar", tags=["avatar"])
+
+
+class AvatarConfigUpdate(BaseModel):
+    display_name: Optional[str] = None
+    skin_tone: Optional[str] = None
+    skin_tone_light: Optional[str] = None
+    hair_color: Optional[str] = None
+    hair_highlight: Optional[str] = None
+    eye_color: Optional[str] = None
+    lip_color: Optional[str] = None
+    blush_color: Optional[str] = None
+
+
+class EmotionUpdate(BaseModel):
+    emotion: str
+    is_speaking: Optional[bool] = None
+    is_thinking: Optional[bool] = None
+
+
+@avatar_router.get("/config")
+async def get_avatar_config(user: str = Depends(get_current_user)):
+    """Get avatar appearance config + model status."""
+    return avatar_engine.get_config()
+
+
+@avatar_router.patch("/config")
+async def update_avatar_config(req: AvatarConfigUpdate, user: str = Depends(get_current_user)):
+    """Update avatar appearance (colours, name)."""
+    updates = {k: v for k, v in req.model_dump().items() if v is not None}
+    return avatar_engine.update_config(updates)
+
+
+@avatar_router.get("/state")
+async def get_avatar_state(user: str = Depends(get_current_user)):
+    """Current real-time avatar state (emotion, speaking, thinking)."""
+    return avatar_engine.get_state()
+
+
+@avatar_router.post("/emotion")
+async def set_avatar_emotion(req: EmotionUpdate, user: str = Depends(get_current_user)):
+    """Manually push an emotion state to the avatar."""
+    avatar_engine.set_emotion(req.emotion)
+    if req.is_speaking is not None:
+        avatar_engine.set_speaking(req.is_speaking)
+    if req.is_thinking is not None:
+        avatar_engine.set_thinking(req.is_thinking)
+    await avatar_engine.broadcast_state()
+    return avatar_engine.get_state()
+
+
+@avatar_router.post("/photo")
+async def upload_avatar_photo(
+    file: UploadFile = File(...),
+    user: str = Depends(get_current_user),
+):
+    """
+    Upload your face photo.
+    Switches avatar from SVG placeholder → real photo mode instantly.
+    Accepts JPEG, PNG, WebP.
+    """
+    allowed = {".jpg", ".jpeg", ".png", ".webp"}
+    ext = Path(file.filename).suffix.lower()
+    if ext not in allowed:
+        raise HTTPException(400, f"Unsupported format {ext}. Use JPEG, PNG or WebP.")
+
+    content = await file.read()
+    if len(content) > 10 * 1024 * 1024:   # 10 MB limit
+        raise HTTPException(400, "Photo too large. Max 10 MB.")
+
+    result = avatar_engine.save_photo(content, file.filename)
+    await avatar_engine.broadcast_state()
+    return result
+
+
+@avatar_router.get("/photo")
+async def serve_avatar_photo(user: str = Depends(get_current_user)):
+    """Serve the uploaded face photo."""
+    path = avatar_engine.get_photo_path()
+    if not path:
+        raise HTTPException(404, "No photo uploaded yet. Use POST /api/avatar/photo.")
+    return FileResponse(str(path), media_type="image/jpeg")
+
+
+@avatar_router.delete("/photo")
+async def delete_avatar_photo(user: str = Depends(get_current_user)):
+    """Remove uploaded photo — reverts to SVG placeholder."""
+    path = avatar_engine.get_photo_path()
+    if path and path.exists():
+        path.unlink()
+    avatar_engine._config["photo_path"] = None
+    avatar_engine._config["model_status"] = "placeholder"
+    avatar_engine._save_config()
+    await avatar_engine.broadcast_state()
+    return {"status": "ok", "model_status": "placeholder"}
+
+
+@avatar_router.post("/model")
+async def register_trained_model(
+    model_path: str = Query(..., description="Absolute path to trained .pt model"),
+    user: str = Depends(get_current_user),
+):
+    """Register a trained face model (called after Colab training)."""
+    try:
+        return avatar_engine.register_trained_model(model_path)
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+
+
+@avatar_router.websocket("/live")
+async def avatar_live_ws(websocket: WebSocket):
+    """
+    WebSocket — pushes real-time avatar state to the frontend.
+    Receives: { "token": "..." } for auth.
+    Sends:    { emotion, is_speaking, is_thinking, model_status, ... }
+    """
+    await websocket.accept()
+    token = None
+
+    try:
+        # First message must be auth token
+        auth_msg = await websocket.receive_json()
+        token = auth_msg.get("token", "")
+        username = auth_manager.validate_token(token)
+        if not username:
+            await websocket.send_json({"error": "Unauthorized"})
+            await websocket.close(code=4001)
+            return
+
+        avatar_engine.add_ws_client(websocket)
+        logger.info(f"Avatar WS connected: {username}")
+
+        # Send current state immediately
+        await websocket.send_json(avatar_engine.get_state())
+
+        # Keep alive — client can also push emotion updates
+        while True:
+            try:
+                msg = await websocket.receive_json()
+                if "emotion" in msg:
+                    avatar_engine.set_emotion(msg["emotion"])
+                if "is_speaking" in msg:
+                    avatar_engine.set_speaking(msg["is_speaking"])
+                if "is_thinking" in msg:
+                    avatar_engine.set_thinking(msg["is_thinking"])
+                # Broadcast to all other connected clients
+                await avatar_engine.broadcast_state()
+            except Exception:
+                break
+
+    except WebSocketDisconnect:
+        pass
+    finally:
+        avatar_engine.remove_ws_client(websocket)
+        logger.info("Avatar WS disconnected")

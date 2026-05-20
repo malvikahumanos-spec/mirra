@@ -108,6 +108,17 @@ CRITICAL RULES:
         # Detect emotion in twin's response
         response_emotion = emotion_engine.text_detector.detect(response_text)
 
+        # Update avatar state in real-time
+        try:
+            from backend.services.avatar.avatar_engine import avatar_engine
+            avatar_engine.set_emotion(response_emotion.get("emotion", "neutral"))
+            avatar_engine.set_speaking(True)
+            avatar_engine.set_thinking(False)
+            import asyncio
+            asyncio.create_task(avatar_engine.broadcast_state())
+        except Exception:
+            pass  # avatar state is non-critical
+
         # Store messages
         self._active_conversations[conversation_id].append({
             "role": "user",
